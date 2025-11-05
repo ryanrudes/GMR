@@ -1,6 +1,8 @@
 import os
 import time
-import mujoco as mj
+from typing import Any, Optional
+
+import mujoco as mj  # type: ignore
 import mujoco.viewer as mjv
 import imageio
 from scipy.spatial.transform import Rotation as R
@@ -22,24 +24,24 @@ def draw_frame(
     rgba_list = [[1, 0, 0, 1], [0, 1, 0, 1], [0, 0, 1, 1]]
     for i in range(3):
         geom = v.user_scn.geoms[v.user_scn.ngeom]
-        mj.mjv_initGeom(
+        mj.mjv_initGeom(  # type: ignore[attr-defined]
             geom,
-            type=mj.mjtGeom.mjGEOM_ARROW,
+            type=mj.mjtGeom.mjGEOM_ARROW,  # type: ignore[attr-defined]
             size=[0.01, 0.01, 0.01],
             pos=pos + pos_offset,
             mat=mat.flatten(),
             rgba=rgba_list[i],
-        )
+        )  # type: ignore[attr-defined]
         if joint_name is not None:
             geom.label = joint_name  # 这里赋名字
         fix = orientation_correction.as_matrix()
-        mj.mjv_connector(
+        mj.mjv_connector(  # type: ignore[attr-defined]
             v.user_scn.geoms[v.user_scn.ngeom],
-            type=mj.mjtGeom.mjGEOM_ARROW,
+            type=mj.mjtGeom.mjGEOM_ARROW,  # type: ignore[attr-defined]
             width=0.005,
             from_=pos + pos_offset,
             to=pos + pos_offset + size * (mat @ fix)[:, i],
-        )
+        )  # type: ignore[attr-defined]
         v.user_scn.ngeom += 1
 
 class RobotMotionViewer:
@@ -54,42 +56,52 @@ class RobotMotionViewer:
                 video_width=640,
                 video_height=480,
                 keyboard_callback=None,
+                launch_viewer=True,
+                verbose=True,
                 ):
         
         self.robot_type = robot_type
         self.xml_path = ROBOT_XML_DICT[robot_type]
-        self.model = mj.MjModel.from_xml_path(str(self.xml_path))
-        self.data = mj.MjData(self.model)
+        self.model = mj.MjModel.from_xml_path(str(self.xml_path))  # type: ignore[attr-defined]
+        self.data = mj.MjData(self.model)  # type: ignore[attr-defined]
         self.robot_base = ROBOT_BASE_DICT[robot_type]
         self.viewer_cam_distance = VIEWER_CAM_DISTANCE_DICT[robot_type]
-        mj.mj_step(self.model, self.data)
-        
+        self.verbose = verbose
+        mj.mj_step(self.model, self.data)  # type: ignore[attr-defined]
+
         self.motion_fps = motion_fps
         self.rate_limiter = RateLimiter(frequency=self.motion_fps, warn=False)
         self.camera_follow = camera_follow
         self.record_video = record_video
 
+        self.viewer: Optional[Any] = None
+        self._camera = mj.MjvCamera()  # type: ignore[attr-defined]
+        mj.mjv_defaultCamera(self._camera)  # type: ignore[attr-defined]
 
-        self.viewer = mjv.launch_passive(
-            model=self.model,
-            data=self.data,
-            show_left_ui=False,
-            show_right_ui=False, 
-            key_callback=keyboard_callback
-            )      
+        if launch_viewer:
+            self.viewer = mjv.launch_passive(
+                model=self.model,
+                data=self.data,
+                show_left_ui=False,
+                show_right_ui=False,
+                key_callback=keyboard_callback
+            )
+            self.viewer.opt.flags[mj.mjtVisFlag.mjVIS_TRANSPARENT] = transparent_robot  # type: ignore[attr-defined]
+            self.active_camera = self.viewer.cam
+        else:
+            self.active_camera = self._camera
 
-        self.viewer.opt.flags[mj.mjtVisFlag.mjVIS_TRANSPARENT] = transparent_robot
-        
         if self.record_video:
             assert video_path is not None, "Please provide video path for recording"
             self.video_path = video_path
             video_dir = os.path.dirname(self.video_path)
-            
+
             if not os.path.exists(video_dir):
                 os.makedirs(video_dir)
             self.mp4_writer = imageio.get_writer(self.video_path, fps=self.motion_fps)
-            print(f"Recording video to {self.video_path}")
-            
+            if self.verbose:
+                print(f"Recording video to {self.video_path}")
+
             # Initialize renderer for video recording
             self.renderer = mj.Renderer(self.model, height=video_height, width=video_width)
         
@@ -120,42 +132,45 @@ class RobotMotionViewer:
         self.data.qpos[:3] = root_pos
         self.data.qpos[3:7] = root_rot # quat need to be scalar first! for mujoco
         self.data.qpos[7:] = dof_pos
-        
-        mj.mj_forward(self.model, self.data)
-        
+
+        mj.mj_forward(self.model, self.data)  # type: ignore[attr-defined]
+
         if follow_camera:
-            self.viewer.cam.lookat = self.data.xpos[self.model.body(self.robot_base).id]
-            self.viewer.cam.distance = self.viewer_cam_distance
-            self.viewer.cam.elevation = -10  # 正面视角，轻微向下看
-            # self.viewer.cam.azimuth = 180    # 正面朝向机器人
-        
-        if human_motion_data is not None:
-            # Clean custom geometry
-            self.viewer.user_scn.ngeom = 0
-            # Draw the task targets for reference
-            for human_body_name, (pos, rot) in human_motion_data.items():
-                draw_frame(
-                    pos,
-                    R.from_quat(rot, scalar_first=True).as_matrix(),
-                    self.viewer,
-                    human_point_scale,
-                    pos_offset=human_pos_offset,
-                    joint_name=human_body_name if show_human_body_name else None
+            self.active_camera.lookat[:] = self.data.xpos[self.model.body(self.robot_base).id]
+            self.active_camera.distance = self.viewer_cam_distance
+            self.active_camera.elevation = -10  # 正面视角，轻微向下看
+            # self.active_camera.azimuth = 180    # 正面朝向机器人
+
+        if self.viewer is not None:
+            if human_motion_data is not None:
+                # Clean custom geometry
+                self.viewer.user_scn.ngeom = 0
+                # Draw the task targets for reference
+                for human_body_name, (pos, rot) in human_motion_data.items():
+                    draw_frame(
+                        pos,
+                        R.from_quat(rot, scalar_first=True).as_matrix(),
+                        self.viewer,
+                        human_point_scale,
+                        pos_offset=human_pos_offset,
+                        joint_name=human_body_name if show_human_body_name else None
                     )
 
-        self.viewer.sync()
+            self.viewer.sync()
         if rate_limit is True:
             self.rate_limiter.sleep()
 
         if self.record_video:
             # Use renderer for proper offscreen rendering
-            self.renderer.update_scene(self.data, camera=self.viewer.cam)
+            self.renderer.update_scene(self.data, camera=self.active_camera)
             img = self.renderer.render()
             self.mp4_writer.append_data(img)
     
     def close(self):
-        self.viewer.close()
-        time.sleep(0.5)
+        if self.viewer is not None:
+            self.viewer.close()
+            time.sleep(0.5)
         if self.record_video:
             self.mp4_writer.close()
-            print(f"Video saved to {self.video_path}")
+            if self.verbose:
+                print(f"Video saved to {self.video_path}")

@@ -21,11 +21,12 @@ if __name__ == "__main__":
         help="SMPLX motion file to load.",
         type=str,
         # required=True,
-        default="/home/yanjieze/projects/g1_wbc/GMR/motion_data/ACCAD/Male1General_c3d/General_A1_-_Stand_stageii.npz",
-        # default="/home/yanjieze/projects/g1_wbc/GMR/motion_data/ACCAD/Male2MartialArtsKicks_c3d/G8_-__roundhouse_left_stageii.npz"
+        #default="/home/ryanrudes/GitHub/GMR/assets/amass/ACCAD/Male1General_c3d/General_A1_-_Stand_stageii.npz",
+        default="/home/ryanrudes/GitHub/GMR/assets/amass/ACCAD/Female1Running_c3d/C20_-__run_to_jump_to_walk_stageii.npz",
+        # default="/home/ryanrudes/GitHub/GMR/assets/amass/ACCAD/Male2MartialArtsKicks_c3d/G8_-__roundhouse_left_stageii.npz"
         # default="/home/yanjieze/projects/g1_wbc/TWIST-dev/motion_data/AMASS/KIT_572_dance_chacha11_stageii.npz"
-        # default="/home/yanjieze/projects/g1_wbc/GMR/motion_data/ACCAD/Male2MartialArtsPunches_c3d/E1_-__Jab_left_stageii.npz",
-        # default="/home/yanjieze/projects/g1_wbc/GMR/motion_data/ACCAD/Male1Running_c3d/Run_C24_-_quick_side_step_left_stageii.npz",
+        # default="/home/ryanrudes/GitHub/GMR/assets/amass/ACCAD/Male2MartialArtsPunches_c3d/E1_-__Jab_left_stageii.npz",
+        # default="/home/ryanrudes/GitHub/GMR/assets/amass/ACCAD/Male1Running_c3d/Run_C24_-_quick_side_step_left_stageii.npz",
     )
     
     parser.add_argument(
@@ -64,6 +65,13 @@ if __name__ == "__main__":
         help="Limit the rate of the retargeted robot motion to keep the same as the human motion.",
     )
 
+    parser.add_argument(
+        "--headless",
+        default=False,
+        action="store_true",
+        help="Disable the interactive viewer so the script can run on machines without an OpenGL display.",
+    )
+
     args = parser.parse_args()
 
 
@@ -87,11 +95,20 @@ if __name__ == "__main__":
         tgt_robot=args.robot,
     )
     
-    robot_motion_viewer = RobotMotionViewer(robot_type=args.robot,
-                                            motion_fps=aligned_fps,
-                                            transparent_robot=0,
-                                            record_video=args.record_video,
-                                            video_path=f"videos/{args.robot}_{args.smplx_file.split('/')[-1].split('.')[0]}.mp4",)
+    viewer_video_path = f"videos/{args.robot}_{args.smplx_file.split('/')[-1].split('.')[0]}.mp4"
+    launch_viewer = not args.headless
+    robot_motion_viewer = None
+    if launch_viewer or args.record_video:
+        if args.headless and args.record_video and os.environ.get("MUJOCO_GL") not in {"egl", "osmesa"}:
+            print("[bold yellow]Tip: set MUJOCO_GL=egl (or osmesa) before running for headless video capture.")
+        robot_motion_viewer = RobotMotionViewer(robot_type=args.robot,
+                                                motion_fps=aligned_fps,
+                                                transparent_robot=0,
+                                                record_video=args.record_video,
+                                                video_path=viewer_video_path,
+                                                launch_viewer=launch_viewer)
+    elif args.headless and args.record_video:
+        print("[bold red]Headless recording requested but viewer instantiation disabled.")
     
 
     curr_frame = 0
@@ -100,6 +117,7 @@ if __name__ == "__main__":
     fps_start_time = time.time()
     fps_display_interval = 2.0  # Display FPS every 2 seconds
     
+    qpos_list = None
     if args.save_path is not None:
         save_dir = os.path.dirname(args.save_path)
         if save_dir:  # Only create directory if it's not empty
@@ -133,20 +151,24 @@ if __name__ == "__main__":
         qpos = retarget.retarget(smplx_data)
 
         # visualize
-        robot_motion_viewer.step(
-            root_pos=qpos[:3],
-            root_rot=qpos[3:7],
-            dof_pos=qpos[7:],
-            human_motion_data=retarget.scaled_human_data,
-            # human_motion_data=smplx_data,
-            human_pos_offset=np.array([0.0, 0.0, 0.0]),
-            show_human_body_name=False,
-            rate_limit=args.rate_limit,
-        )
-        if args.save_path is not None:
+        if robot_motion_viewer is not None:
+            robot_motion_viewer.step(
+                root_pos=qpos[:3],
+                root_rot=qpos[3:7],
+                dof_pos=qpos[7:],
+                human_motion_data=retarget.scaled_human_data,
+                # human_motion_data=smplx_data,
+                human_pos_offset=np.array([0.0, 0.0, 0.0]),
+                show_human_body_name=False,
+                rate_limit=args.rate_limit,
+            )
+        elif args.rate_limit:
+            # Keep timing consistent with the source motion when running headless.
+            time.sleep(1.0 / aligned_fps)
+        if qpos_list is not None:
             qpos_list.append(qpos)
             
-    if args.save_path is not None:
+    if qpos_list is not None:
         import pickle
         root_pos = np.array([qpos[:3] for qpos in qpos_list])
         # save from wxyz to xyzw
@@ -169,4 +191,5 @@ if __name__ == "__main__":
             
       
     
-    robot_motion_viewer.close()
+    if robot_motion_viewer is not None:
+        robot_motion_viewer.close()

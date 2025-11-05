@@ -42,6 +42,9 @@ data/
 data_record/
 Download/
 assets/body_models/
+assets/omomo
+assets/lafan1
+assets/omomo.tar.gz
 
 # Media files
 *.mp4
@@ -110,3 +113,8 @@ GVHMR/
 batch_twist1_to_csv.py
 
 yaml_to_flat_csv.py
+
+assets/amass
+datasets/
+
+!assets/amass/download.py
